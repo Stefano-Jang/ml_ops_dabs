@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 
 from mlflow.deployments import get_deploy_client
 from mlflow.exceptions import MlflowException
+from mlflow import MlflowClient
+import mlflow
 
 from serving.utils import get_api_credentials
 from config import ServingEndpointPermissions
@@ -23,12 +25,17 @@ class ModelServingConfig:
     api_token: str = field(init=False)
     workload_size: str = 'Small'
     workload_type: str = 'CPU'
+    target_alias: str = 'champion'
 
     def __post_init__(self):
         self.api_root, self.api_token = get_api_credentials()
         self.inference_table_prefix = (
             self.endpoint_name.replace("-", "_") + "_request_response"
         )
+        mlflow.set_registry_uri("databricks-uc")
+        client = MlflowClient()
+        mv = client.get_model_version_by_alias(self.registered_model_name, self.target_alias)
+        self.model_version = mv.version
 
     def get_entity_config(self):
         """Return the json config for this entity to be used with the Databricks
@@ -62,26 +69,30 @@ def get_endpoint_info(endpoint_name: str):
 def create_endpoint(
     cfg: ModelServingConfig, perms_cfg: ServingEndpointPermissions = None
 ):
+    api_root, api_token = get_api_credentials()
     """Create a new endpoint with the specified configuration."""
     data = {
         "name": cfg.endpoint_name,
         "config": {
             "served_entities": [cfg.get_entity_config()]
-            # ,"auto_capture_config": {
-            #     "catalog_name": cfg.catalog,
-            #     "schema_name": cfg.schema,
-            #     "table_name_prefix": cfg.inference_table_prefix,
-            # },
         },
     }
-    headers = {"Context-Type": "text/json", "Authorization": f"Bearer {cfg.api_token}"}
-    url = f"{cfg.api_root}/api/2.0/serving-endpoints"
+    #headers = {"Context-Type": "text/json", "Authorization": f"Bearer {cfg.api_token}"}
+    #url = f"{cfg.api_root}/api/2.0/serving-endpoints"
+    headers = {"Context-Type": "text/json", "Authorization": f"Bearer {api_token}"}
+    url = f"{api_root}/api/2.0/serving-endpoints"
+
+    print("\n------------------")
+    print(data)
+    print("\n------------------")
+
     response = requests.post(url=url, json=data, headers=headers)
     response.raise_for_status()
     response_json = response.json()
     serving_endpoint_id = response_json["id"]
     if perms_cfg:
-        perms_url = f"{cfg.api_root}/api/2.0/permissions/serving-endpoints/{serving_endpoint_id}"
+        #perms_url = f"{cfg.api_root}/api/2.0/permissions/serving-endpoints/{serving_endpoint_id}"
+        perms_url = f"{api_root}/api/2.0/permissions/serving-endpoints/{serving_endpoint_id}"
         perms_response = requests.patch(
             url=perms_url, json=perms_cfg.acl, headers=headers
         )
